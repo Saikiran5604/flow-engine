@@ -1,0 +1,50 @@
+event_triggers:
+  - name: workflow_run_notify
+    table:
+      name: workflow_runs
+      schema: public
+    insert:
+      columns: []
+    update:
+      columns:
+        - status
+        - finished_at
+    delete:
+      columns: []
+    webhook: "{{NHOST_FUNCTIONS_URL}}/notify-workflow-run"
+    headers:
+      - name: x-nhost-webhook-secret
+        value_from_env: NHOST_WEBHOOK_SECRET
+    retry_conf:
+      num_retries: 3
+      interval_sec: 5
+      timeout_sec: 20
+    cleanup_config:
+      schedule: 168
+      timeout: 60
+      batch_size: 10000
+      clear_older_than: 168
+    comment: "Delivers completed or failed run notifications to the server-side notify handler."
+
+  - name: workflow_step_notify
+    table:
+      name: step_runs
+      schema: public
+    insert:
+      columns: []
+    update:
+      columns:
+        - status
+        - approved_by
+        - approved_at
+    delete:
+      columns: []
+    webhook: "{{NHOST_FUNCTIONS_URL}}/notify-workflow-step"
+    headers:
+      - name: x-nhost-webhook-secret
+        value_from_env: NHOST_WEBHOOK_SECRET
+    retry_conf:
+      num_retries: 3
+      interval_sec: 5
+      timeout_sec: 20
+    comment: "Delivers step-level completion, failure, and approval notifications."

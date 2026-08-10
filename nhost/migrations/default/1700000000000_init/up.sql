@@ -61,7 +61,8 @@ create table public.workflow_triggers (
   workflow_id text not null references public.workflows(id) on delete cascade,
   type        text not null check (type in ('manual','webhook','scheduled','database_event')),
   config      jsonb not null default '{}'::jsonb,
-  token       text unique
+  token         text unique,
+  last_fired_at timestamptz
 );
 create index workflow_triggers_wf_idx on public.workflow_triggers(workflow_id);
 
@@ -110,3 +111,22 @@ create table public.artifacts (
   created_at timestamptz not null default now()
 );
 create index artifacts_org_idx on public.artifacts(org_id);
+
+-- Tracked Hasura view for the current-month org usage dashboard.
+-- Keeping this as a view makes the aggregation available to GraphQL without
+-- exposing cross-tenant rows; Hasura permissions below scope by org_id.
+create or replace view public.org_usage_stats as
+select
+  o.id as org_id,
+  to_char(date_trunc('month', now()), 'YYYY-MM') as period,
+  count(r.id)::integer as total_runs,
+  count(r.id) filter (where r.status = 'completed')::integer as completed_runs,
+  count(r.id) filter (where r.status = 'failed')::integer as failed_runs,
+  count(r.id) filter (where r.status = 'paused')::integer as paused_runs,
+  round(avg(extract(epoch from (r.finished_at - r.started_at)) * 1000)
+    filter (where r.finished_at is not null))::integer as avg_duration_ms
+from public.organizations o
+left join public.workflow_runs r
+  on r.org_id = o.id
+  and r.started_at >= date_trunc('month', now())
+group by o.id;

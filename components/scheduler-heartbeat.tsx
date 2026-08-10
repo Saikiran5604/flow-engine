@@ -5,9 +5,9 @@ import { useEffect } from "react"
 // ---------------------------------------------------------------------------
 // In-app heartbeat that drives scheduled triggers during the live demo. It
 // pings the scheduler tick endpoint on an interval; the server decides which
-// triggers are actually due. This exists ONLY because the v0 preview has no
-// external cron — in the deployed nhost project a Hasura cron trigger calls the
-// scheduled-tick function instead and this component is not needed.
+// triggers are actually due. This exists only for the local live preview, where
+// no external cron is configured. In the deployed nhost project a Hasura cron
+// trigger calls the scheduled-tick function instead and this component is not needed.
 // ---------------------------------------------------------------------------
 
 export function SchedulerHeartbeat({ intervalMs = 15000 }: { intervalMs?: number }) {

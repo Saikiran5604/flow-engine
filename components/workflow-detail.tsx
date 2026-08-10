@@ -195,6 +195,7 @@ export function WorkflowDetail({ role, workflow, runs, initialRunId }: DetailPro
               </li>
             ))}
           </ul>
+          </div>
         </aside>
       </div>
     </div>

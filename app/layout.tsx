@@ -1,4 +1,3 @@
-import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
 import { Geist, Geist_Mono } from 'next/font/google'
 import './globals.css'
@@ -10,7 +9,6 @@ export const metadata: Metadata = {
   title: 'Flowgent — AI Agent Workflow Builder',
   description:
     'A mini n8n for chaining AI agent steps: multi-org workflows, two-layer permissions, live run subscriptions, and an approval-gated execution engine.',
-  generator: 'v0.app',
 }
 
 export const viewport: Viewport = {
@@ -27,7 +25,6 @@ export default function RootLayout({
     <html lang="en" className={`dark ${geistSans.variable} ${geistMono.variable}`}>
       <body className="antialiased bg-background text-foreground font-sans">
         {children}
-        {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>
     </html>
   )

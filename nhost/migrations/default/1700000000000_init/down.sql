@@ -1,3 +1,4 @@
+drop view if exists public.org_usage_stats cascade;
 drop table if exists public.artifacts cascade;
 drop table if exists public.step_runs cascade;
 drop table if exists public.workflow_runs cascade;

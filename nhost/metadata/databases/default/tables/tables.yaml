@@ -234,3 +234,14 @@
             org_members:
               user_id:
                 _eq: X-Hasura-User-Id
+
+- table:
+    name: org_usage_stats
+    schema: public
+  select_permissions:
+    - role: user
+      permission:
+        columns: [org_id, period, total_runs, completed_runs, failed_runs, paused_runs, avg_duration_ms]
+        filter:
+          org_id:
+            _eq: X-Hasura-Org-Id
