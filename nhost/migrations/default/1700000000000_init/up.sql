@@ -61,7 +61,8 @@ create table public.workflow_triggers (
   workflow_id text not null references public.workflows(id) on delete cascade,
   type        text not null check (type in ('manual','webhook','scheduled','database_event')),
   config      jsonb not null default '{}'::jsonb,
-  token       text unique
+  token         text unique,
+  last_fired_at timestamptz
 );
 create index workflow_triggers_wf_idx on public.workflow_triggers(workflow_id);
 
