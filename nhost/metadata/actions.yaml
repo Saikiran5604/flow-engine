@@ -1,0 +1,47 @@
+actions:
+  - name: triggerWorkflowRun
+    definition:
+      kind: synchronous
+      handler: "{{NHOST_FUNCTIONS_URL}}/trigger-workflow-run"
+      # Forward the caller's identity so the handler can re-derive org + role
+      # from the session, never trusting client-supplied ids.
+      forward_client_headers: true
+      headers:
+        - name: x-nhost-webhook-secret
+          value_from_env: NHOST_WEBHOOK_SECRET
+    # Layer-1 role gating at the GraphQL boundary: viewers can't even call it.
+    permissions:
+      - role: owner
+      - role: editor
+    comment: "Starts a workflow run. Handler re-checks org membership and role."
+
+  - name: approveStep
+    definition:
+      kind: synchronous
+      handler: "{{NHOST_FUNCTIONS_URL}}/approve-step"
+      forward_client_headers: true
+      headers:
+        - name: x-nhost-webhook-secret
+          value_from_env: NHOST_WEBHOOK_SECRET
+    # Only owners resolve approval gates.
+    permissions:
+      - role: owner
+    comment: "Approves a paused human_approval step and resumes the run."
+
+custom_types:
+  enums: []
+  input_objects: []
+  objects:
+    - name: TriggerRunOutput
+      fields:
+        - name: runId
+          type: String
+        - name: status
+          type: String!
+    - name: ApproveStepOutput
+      fields:
+        - name: runId
+          type: String!
+        - name: status
+          type: String!
+  scalars: []

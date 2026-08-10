@@ -1,0 +1,28 @@
+# nhost project configuration.
+# Deploy with: nhost up  (local)  or  nhost deploy  (cloud)
+
+[global]
+
+[hasura]
+version = "v2.36.0"
+adminSecret = "{{ secrets.HASURA_GRAPHQL_ADMIN_SECRET }}"
+webhookSecret = "{{ secrets.NHOST_WEBHOOK_SECRET }}"
+
+[hasura.jwt]
+# JWT claims map org id + role into Hasura session variables. getSession() in
+# the app trusts these claims — never a client-supplied userId/orgId.
+# Expected custom claims namespace:
+#   https://hasura.io/jwt/claims:
+#     x-hasura-default-role: <role>
+#     x-hasura-allowed-roles: ["user", "owner", "editor", "viewer"]
+#     x-hasura-user-id: <uuid>
+#     x-hasura-org-id: <uuid>
+
+[functions]
+[functions.node]
+version = 20
+
+[auth]
+
+[postgres]
+version = "14.11-20240710-1"

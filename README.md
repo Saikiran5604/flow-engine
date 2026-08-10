@@ -10,23 +10,38 @@ human-in-the-loop approval.
 
 ## ⚠️ Stack note (read this first)
 
-The original brief named **nhost + Hasura**. Per the agreed direction, this
-submission builds the **full frontend + workflow-engine logic now against a
-swappable, Hasura-shaped data layer**, so it runs and demos **live** end-to-end.
-Every boundary that would be a Hasura concern is isolated so it can be swapped
-for real Hasura/nhost without touching the UI. See
-[**"Mapping to Hasura/nhost"**](#mapping-to-hasuranhost) below — this is
-deliberate, not an oversight.
+The original brief named **nhost + Hasura**. This submission does two things at
+once:
 
-- **Data layer** — `lib/store.ts` is an in-memory store with the exact table
-  shapes (`organizations`, `org_members`, `workflows`, `workflow_steps`,
-  `workflow_triggers`, `workflow_runs`, `step_runs`, `artifacts`). Replace its
-  bodies with Hasura GraphQL calls; the callers don't change.
-- **Action handler** — `lib/engine.ts` is the stand-in for the Hasura Action
-  that the brief calls `triggerWorkflowRun`.
-- **Subscriptions** — the live run view polls an org-scoped endpoint
-  (`/api/runs/[runId]`). Swap the SWR fetcher for a Hasura GraphQL subscription
-  on `step_runs`; the component contract is identical.
+1. **Runs live end-to-end today** on a zero-setup in-memory data layer, so every
+   scenario (tenant isolation, role gating, quota, retries, approval pause/resume)
+   is demonstrable in the preview with no external services.
+2. **Ships the real Hasura/nhost layer** as deployable artifacts in
+   [`nhost/`](#deploying-the-real-hasuranhost-layer) — SQL migrations, Hasura
+   metadata with row-level permissions, and the serverless Action handlers. The
+   app selects between the two **at runtime via env vars** with no code changes.
+
+This is possible because all data access goes through a single async **adapter
+seam** (`lib/data/`):
+
+- **`lib/data/adapter.ts`** — the `DataLayer` interface every consumer depends
+  on. Nothing in the app talks to a store directly.
+- **`lib/data/memory.ts`** — in-memory implementation (the live demo). Backed by
+  `lib/store.ts` with the exact table shapes (`organizations`, `org_members`,
+  `workflows`, `workflow_steps`, `workflow_triggers`, `workflow_runs`,
+  `step_runs`, `artifacts`).
+- **`lib/data/nhost.ts`** — Hasura GraphQL implementation (dependency-free
+  `fetch` client). Maps snake_case columns ↔ domain types.
+- **`lib/data/index.ts`** — `getDataLayer()` returns the nhost adapter when
+  `NHOST_GRAPHQL_URL` + `NHOST_ADMIN_SECRET` are set, otherwise the in-memory
+  one. **This is the only switch.**
+
+The **action handler** `lib/engine.ts` is the in-process form of the Hasura
+Action the brief calls `triggerWorkflowRun`; its server-side, admin-privileged
+twin lives at `nhost/functions/trigger-workflow-run.ts`. The live run view polls
+an org-scoped endpoint (`/api/runs/[runId]`); swapping the SWR fetcher for a
+Hasura subscription on `step_runs` is a one-line change with an identical
+component contract.
 
 ---
 
@@ -63,6 +78,35 @@ always runs. Set the key in project env vars to see live completions.
 Outbound `http_request` steps are attempted for real (with one retry); if the
 runtime has no outbound network, the step falls back to a **disclosed simulated
 response** (`"simulated": true`) so the pipeline can finish.
+
+---
+
+## Schema reasoning & data model
+
+The relational schema follows a strict multi-tenant hierarchy:
+
+```
+organizations → org_members → workflows → steps / triggers → runs → step_runs
+```
+
+Design decisions (see `nhost/migrations/default/1700000000000_init/up.sql`):
+
+- **UUID primary keys everywhere.** Non-sequential ids remove predictable
+  ID-guessing attacks and allow client/distributed id generation. Cross-org
+  access is denied *and* the id space isn't enumerable.
+- **JSONB config columns.** `workflow_steps.config` and
+  `workflow_triggers.config` are `jsonb`, so each step type carries its own
+  parameters (LLM prompt, HTTP headers, branch condition) without a rigid,
+  frequently-migrated column per node type. New step types need **zero** schema
+  changes.
+- **Cascading integrity.** Foreign keys use `ON DELETE CASCADE` anchored to
+  `organizations` and `workflows`, so deleting a tenant or workflow cleanly
+  purges orphaned runs, step-runs, and artifacts — no dangling execution
+  history.
+- **Denormalized `org_id` on execution tables.** `workflow_runs` and
+  `step_runs` carry `org_id` directly (not only via `workflow_id`) so Hasura
+  row permissions can scope them with a single, index-backed predicate instead
+  of a multi-hop relationship walk on every subscription tick.
 
 ---
 
@@ -155,19 +199,56 @@ are disabled.
 
 ---
 
-## Mapping to Hasura/nhost
+## Deploying the real Hasura/nhost layer
 
-| This submission                          | Real Hasura / nhost                                             |
-| ---------------------------------------- | --------------------------------------------------------------- |
-| `lib/store.ts` (in-memory tables)        | Postgres tables + Hasura GraphQL                                |
-| `orgId` filter on every query (Layer 1)  | Hasura **row-level permissions** keyed on the `x-hasura-org-id` session var |
-| role capability checks                   | Hasura **role permissions** (`owner`/`editor`/`viewer`)         |
-| `lib/engine.ts` (`startRun`)             | Hasura **Action** `triggerWorkflowRun` → nhost serverless fn    |
-| `approveStep` runtime role re-check      | Action handler logic (can't be a static permission)             |
-| owner-only step/trigger validation       | Action handler + permission preset                              |
-| `/api/runs/[runId]` polling              | Hasura **subscription** on `step_runs`                          |
-| signed-cookie mock auth                  | **nhost Auth** (JWT with Hasura claims)                         |
-| `http_request` fetch + retry             | serverless fetch; `db_write`/`notify` via **Event Triggers**    |
+The `nhost/` directory is a complete, deployable nhost project. It is **not**
+mocked — it contains the migrations, permission metadata, and serverless
+handlers described in the roadmap.
+
+```
+nhost/
+  nhost.toml                                   # project + JWT-claims config
+  migrations/default/1700000000000_init/       # up.sql / down.sql — full schema
+  seeds/default/1700000000001_demo.sql         # the two-org demo dataset
+  metadata/
+    databases/.../tables/tables.yaml           # relationships + Layer-1 row permissions
+    actions.yaml / actions.graphql             # triggerWorkflowRun, approveStep actions
+  functions/
+    _lib/graphql.ts                            # admin GraphQL client + claim parsing
+    trigger-workflow-run.ts                    # Layer-1/2 re-checks, quota, retries, LLM
+    approve-step.ts                            # owner-only approval + resume
+```
+
+Deploy in three steps (matches the roadmap exactly):
+
+1. **Migrations & metadata** — `nhost up` (local) or `nhost deploy` (cloud)
+   pushes the schema and applies the Hasura permission metadata that enforces
+   **Layer 1** at the GraphQL boundary.
+2. **Serverless handlers** — the two functions deploy automatically with the
+   project; the actions in `metadata/actions.yaml` point at them and gate them
+   by role (viewers can't even call `triggerWorkflowRun`).
+3. **Point the app at it** — set `NHOST_GRAPHQL_URL` and `NHOST_ADMIN_SECRET`
+   in project env vars. `getDataLayer()` picks up the nhost adapter on next
+   request. No app code changes.
+
+### How each concern maps
+
+| This submission                          | Real Hasura / nhost (shipped in `nhost/`)                        |
+| ---------------------------------------- | ---------------------------------------------------------------- |
+| `lib/data/memory.ts` + `lib/store.ts`    | Postgres tables (`migrations/…/up.sql`) via `lib/data/nhost.ts`  |
+| `orgId` filter on every query (Layer 1)  | Hasura **row-level permissions** on `x-hasura-org-id` (`tables.yaml`) |
+| role capability checks                   | Hasura **role permissions** (`owner`/`editor`/`viewer`)          |
+| `lib/engine.ts` (`startRun`)             | Action `triggerWorkflowRun` → `functions/trigger-workflow-run.ts` |
+| `approveStep` runtime role re-check      | `functions/approve-step.ts` (owner-only, can't be a static rule) |
+| owner-only step/trigger validation       | Action permission preset + handler re-check                     |
+| `/api/runs/[runId]` polling              | Hasura **subscription** on `step_runs`                           |
+| signed-cookie mock auth                  | **nhost Auth** JWT → `x-hasura-user-id` / `-org-id` / `-role`    |
+| `http_request` fetch + retry             | serverless fetch; `db_write`/`notify` via handler / Event Triggers |
+
+Note the security posture: the serverless handlers run with the **admin
+secret**, so they bypass Hasura row permissions — which is exactly why they
+**re-derive the caller's org and role from the forwarded JWT claims and
+re-enforce both layers** rather than trusting anything in the request body.
 
 ---
 
@@ -175,13 +256,19 @@ are disabled.
 
 ```
 lib/
+  data/
+    adapter.ts    # DataLayer interface — the single seam every consumer uses
+    memory.ts     # in-memory implementation (live demo)
+    nhost.ts      # Hasura GraphQL implementation (fetch client)
+    index.ts      # getDataLayer() — picks adapter from env vars
   types.ts        # schema types + owner-only capability sets
-  store.ts        # Hasura-shaped data layer + org-scoped accessors + seed
-  auth.ts         # mock session (swap for nhost Auth)
+  store.ts        # in-memory tables + org-scoped accessors + seed
+  auth.ts         # mock session via the seam (swap for nhost Auth)
   engine.ts       # workflow engine = the triggerWorkflowRun action handler
   actions.ts      # server actions; enforce Layer 1 on every call
   llm.ts          # real Groq call with disclosed stub fallback
   step-meta.ts    # step/trigger metadata + owner-only flags
+nhost/            # deployable Hasura/nhost project (see deploy section)
 app/
   login/          # identity picker (mock auth)
   page.tsx        # org-scoped dashboard + quota + members
