@@ -22,6 +22,10 @@ webhookSecret = "{{ secrets.NHOST_WEBHOOK_SECRET }}"
 [functions.node]
 version = 20
 
+[functions.scheduled-workflow-tick]
+# Configure the Nhost cron trigger to POST here every minute.
+cron = "* * * * *"
+
 [auth]
 
 [postgres]

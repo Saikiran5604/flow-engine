@@ -213,10 +213,13 @@ nhost/
   metadata/
     databases/.../tables/tables.yaml           # relationships + Layer-1 row permissions
     actions.yaml / actions.graphql             # triggerWorkflowRun, approveStep actions
+    databases/default/event_triggers.yaml      # run/step notification Event Triggers
   functions/
     _lib/graphql.ts                            # admin GraphQL client + claim parsing
     trigger-workflow-run.ts                    # Layer-1/2 re-checks, quota, retries, LLM
     approve-step.ts                            # owner-only approval + resume
+    scheduled-workflow-tick.ts                 # cron-driven scheduled triggers
+    notify-workflow-run.ts / notify-workflow-step.ts # Event Trigger handlers
 ```
 
 Deploy in three steps (matches the roadmap exactly):
@@ -250,6 +253,17 @@ secret**, so they bypass Hasura row permissions — which is exactly why they
 **re-derive the caller's org and role from the forwarded JWT claims and
 re-enforce both layers** rather than trusting anything in the request body.
 
+### Why the live preview uses Actions + polling
+
+The preview intentionally keeps its zero-setup path on Next.js Server Actions
+and SWR polling so it remains runnable without an Nhost project. When the Nhost
+variables are present, reads and writes use the GraphQL adapter, the
+aggregation reads the tracked `org_usage_stats` view, and deployed Nhost
+Action handlers own execution. A production UI can replace the polling
+fetcher with a Hasura subscription on `workflow_runs` / `step_runs`; the same
+org and role predicates remain enforced at the Hasura boundary and inside
+handlers.
+
 ---
 
 ## Project structure
@@ -276,6 +290,11 @@ app/
   workflows/[id]  # detail + live run view (not-found on cross-org)
   api/runs/*      # org-scoped run state (subscription simulation)
   api/webhook/*   # inbound webhook trigger (owner-only trigger type)
+  api/scheduler/tick # live preview heartbeat for scheduled triggers
+components/
+  triggers-panel.tsx       # copyable webhook URL + test event + schedule status
+  scheduler-heartbeat.tsx  # invokes scheduled trigger tick in preview
+  usage-card.tsx           # org_usage_stats dashboard aggregation
 components/
   workflow-builder.tsx   # typed steps, drag-reorder, capability gating
   run-view.tsx           # live step-by-step run with approve UI
