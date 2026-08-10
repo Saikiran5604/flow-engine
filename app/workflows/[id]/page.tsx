@@ -16,7 +16,10 @@ export default async function WorkflowPage({ params }: { params: Promise<{ id: s
 
   const { workflow } = detail
 
-  // Layer 1 already enforced by getWorkflowDetail above.
+  // Layer 1 already enforced by getWorkflowDetail above. Only select a run
+  // that still exists in the current data layer; this avoids rendering a stale
+  // paused run after a demo restart, which otherwise causes "Step not found"
+  // when its old step-run id is submitted for approval.
   const dl = await getDataLayer()
   const runs = (await dl.listRuns(workflow.id)).map((r) => ({
     id: r.id,
@@ -24,6 +27,9 @@ export default async function WorkflowPage({ params }: { params: Promise<{ id: s
     triggerType: r.triggerType,
     startedAt: r.startedAt,
   }))
+  const latestRunId = workflow.latestRunId && runs.some((r) => r.id === workflow.latestRunId)
+    ? workflow.latestRunId
+    : null
 
   return (
     <div className="min-h-screen bg-background">
@@ -42,7 +48,7 @@ export default async function WorkflowPage({ params }: { params: Promise<{ id: s
           triggers: workflow.triggers,
         }}
         runs={runs}
-        initialRunId={workflow.latestRunId}
+        initialRunId={latestRunId}
       />
     </div>
   )
