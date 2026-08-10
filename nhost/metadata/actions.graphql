@@ -1,0 +1,24 @@
+# Custom mutations backed by the serverless Action handlers in nhost/functions.
+# The `user` role is allowed to invoke them; the handlers themselves enforce
+# Layer 1 (org scoping) and Layer 2 (owner-only steps + approval role) using
+# the forwarded JWT, so being allowed to *call* the action is not the same as
+# being allowed to succeed.
+
+type Mutation {
+  triggerWorkflowRun(workflowId: String!): TriggerRunOutput
+}
+
+type Mutation {
+  approveStep(stepRunId: String!): ApproveStepOutput
+}
+
+type TriggerRunOutput {
+  ok: Boolean!
+  runId: String
+  error: String
+}
+
+type ApproveStepOutput {
+  ok: Boolean!
+  error: String
+}

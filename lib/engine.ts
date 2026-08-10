@@ -1,14 +1,6 @@
+import { getDataLayer } from "./data"
+import type { DataLayer } from "./data/adapter"
 import { callLLM } from "./llm"
-import {
-  createRun,
-  createStepRun,
-  incrementQuota,
-  raw,
-  roleInOrg,
-  updateRun,
-  updateStepRun,
-  writeArtifact,
-} from "./store"
 import type { StepRun, WorkflowRun, WorkflowStep, TriggerType } from "./types"
 
 // ---------------------------------------------------------------------------
@@ -25,6 +17,9 @@ import type { StepRun, WorkflowRun, WorkflowStep, TriggerType } from "./types"
 //   7. Increment org quota usage on completion.
 //
 // Execution runs detached from the request so the client can stream progress.
+// All persistence goes through the DataLayer seam, so this same code runs
+// against the in-memory store OR Hasura. In production this file's logic lives
+// in the nhost serverless functions (see nhost/functions/*).
 // ---------------------------------------------------------------------------
 
 const STEP_DELAY_MS = 700 // visible pacing for the live subscription demo
@@ -51,16 +46,17 @@ function uid() {
 
 // Entry point for a manual/webhook/event run. Authorization for manual runs is
 // checked in the server action before calling this; system-triggered runs pass
-// systemPrincipal=true to represent an automated caller (webhook/cron/event).
-export function startRun(input: {
+// their own principal to represent an automated caller (webhook/cron/event).
+export async function startRun(input: {
   workflowId: string
   triggeredBy: string
   triggerType: TriggerType
-}): TriggerResult {
-  const wf = raw.workflow(input.workflowId)
+}): Promise<TriggerResult> {
+  const dl = await getDataLayer()
+  const wf = await dl.getWorkflow(input.workflowId)
   if (!wf) return { ok: false, error: "Workflow not found", code: "not_found" }
 
-  const org = raw.org(wf.orgId)
+  const org = await dl.getOrg(wf.orgId)
   if (!org) return { ok: false, error: "Org not found", code: "not_found" }
 
   // Quota check (Action handler responsibility).
@@ -68,10 +64,10 @@ export function startRun(input: {
     return { ok: false, error: "Organization quota exhausted for this period", code: "quota" }
   }
 
-  const steps = raw.stepsFor(input.workflowId)
+  const steps = await dl.getSteps(input.workflowId)
   if (steps.length === 0) return { ok: false, error: "Workflow has no steps", code: "config" }
 
-  const run = createRun({
+  const run = await dl.createRun({
     workflowId: input.workflowId,
     orgId: wf.orgId,
     triggeredBy: input.triggeredBy,
@@ -79,8 +75,8 @@ export function startRun(input: {
   })
 
   // Pre-create step_runs as pending so the subscription shows the full plan.
-  steps.forEach((s) =>
-    createStepRun({
+  for (const s of steps) {
+    await dl.createStepRun({
       runId: run.id,
       stepId: s.id,
       order: s.order,
@@ -88,8 +84,8 @@ export function startRun(input: {
       name: s.name,
       status: "pending",
       attempt: 0,
-    }),
-  )
+    })
+  }
 
   contexts.set(run.id, { lastOutput: undefined, billableCalls: 0 })
 
@@ -101,24 +97,27 @@ export function startRun(input: {
 
 // Resume a paused run after an approval_gate clears. Called by approveStep once
 // the approver's role has been verified.
-export function resumeRun(runId: string, fromOrder: number) {
-  updateRun(runId, { status: "running" })
+export async function resumeRun(runId: string, fromOrder: number) {
+  const dl = await getDataLayer()
+  await dl.updateRun(runId, { status: "running" })
   void execute(runId, fromOrder)
 }
 
 async function execute(runId: string, fromOrder: number) {
-  const run = raw.run(runId)
+  const dl = await getDataLayer()
+  const run = await dl.getRun(runId)
   if (!run) return
-  const steps = raw.stepsFor(run.workflowId)
+  const steps = await dl.getSteps(run.workflowId)
   const ctx = contexts.get(runId) ?? { lastOutput: undefined, billableCalls: 0 }
   contexts.set(runId, ctx)
 
-  updateRun(runId, { status: "running" })
+  await dl.updateRun(runId, { status: "running" })
 
   for (const step of steps) {
     if (step.order < fromOrder) continue
 
-    const sr = raw.stepRunsFor(runId).find((x) => x.stepId === step.id)
+    const stepRuns = await dl.getStepRuns(runId)
+    const sr = stepRuns.find((x) => x.stepId === step.id)
     if (!sr) continue
     if (sr.status === "completed" || sr.status === "skipped") continue
 
@@ -126,33 +125,37 @@ async function execute(runId: string, fromOrder: number) {
 
     // approval_gate: pause the whole run and stop. Resume happens via approveStep.
     if (step.type === "approval_gate") {
-      updateStepRun(sr.id, { status: "paused", startedAt: nowIfEmpty(sr) })
-      updateRun(runId, { status: "paused" })
+      await dl.updateStepRun(sr.id, { status: "paused", startedAt: nowIfEmpty(sr) })
+      await dl.updateRun(runId, { status: "paused" })
       return
     }
 
-    updateStepRun(sr.id, { status: "running", startedAt: new Date().toISOString(), input: ctx.lastOutput })
+    await dl.updateStepRun(sr.id, {
+      status: "running",
+      startedAt: new Date().toISOString(),
+      input: ctx.lastOutput,
+    })
 
     try {
-      const output = await runStep(step, run, ctx)
+      const output = await runStep(dl, step, run, ctx)
 
       // conditional_branch may signal that subsequent steps should be skipped.
       if (step.type === "conditional_branch") {
         const { branchTaken, skipCount } = output as { branchTaken: string; skipCount: number }
-        updateStepRun(sr.id, {
+        await dl.updateStepRun(sr.id, {
           status: "completed",
           output,
           finishedAt: new Date().toISOString(),
           attempt: Math.max(sr.attempt, 1),
         })
         if (skipCount > 0) {
-          skipNext(runId, step.order, skipCount)
+          await skipNext(dl, runId, step.order, skipCount)
         }
         ctx.lastOutput = branchTaken
         continue
       }
 
-      updateStepRun(sr.id, {
+      await dl.updateStepRun(sr.id, {
         status: "completed",
         output,
         finishedAt: new Date().toISOString(),
@@ -160,12 +163,12 @@ async function execute(runId: string, fromOrder: number) {
       })
       ctx.lastOutput = extractLast(step, output)
     } catch (err) {
-      updateStepRun(sr.id, {
+      await dl.updateStepRun(sr.id, {
         status: "failed",
         error: err instanceof Error ? err.message : String(err),
         finishedAt: new Date().toISOString(),
       })
-      updateRun(runId, {
+      await dl.updateRun(runId, {
         status: "failed",
         finishedAt: new Date().toISOString(),
         error: `Step "${step.name}" failed`,
@@ -176,8 +179,8 @@ async function execute(runId: string, fromOrder: number) {
 
   // Completed all steps -> bill quota once for the run's billable calls.
   const billed = Math.max(1, ctx.billableCalls)
-  incrementQuota(run.orgId, billed)
-  updateRun(runId, { status: "completed", finishedAt: new Date().toISOString() })
+  await dl.incrementQuota(run.orgId, billed)
+  await dl.updateRun(runId, { status: "completed", finishedAt: new Date().toISOString() })
   contexts.delete(runId)
 }
 
@@ -185,18 +188,17 @@ function nowIfEmpty(sr: StepRun) {
   return sr.startedAt ?? new Date().toISOString()
 }
 
-function skipNext(runId: string, afterOrder: number, count: number) {
-  const srs = raw
-    .stepRunsFor(runId)
+async function skipNext(dl: DataLayer, runId: string, afterOrder: number, count: number) {
+  const srs = (await dl.getStepRuns(runId))
     .filter((x) => x.order > afterOrder && x.status === "pending")
     .slice(0, count)
-  srs.forEach((x) =>
-    updateStepRun(x.id, {
+  for (const x of srs) {
+    await dl.updateStepRun(x.id, {
       status: "skipped",
       finishedAt: new Date().toISOString(),
       output: { skipped: true, reason: "conditional_branch" },
-    }),
-  )
+    })
+  }
 }
 
 function extractLast(step: WorkflowStep, output: unknown): unknown {
@@ -206,12 +208,12 @@ function extractLast(step: WorkflowStep, output: unknown): unknown {
 
 // --- individual step executors with retry for external calls ----------------
 
-async function runStep(step: WorkflowStep, run: WorkflowRun, ctx: RunContext): Promise<unknown> {
+async function runStep(dl: DataLayer, step: WorkflowStep, run: WorkflowRun, ctx: RunContext): Promise<unknown> {
   switch (step.type) {
     case "llm_call": {
       const prompt = String(step.config.prompt ?? "")
       const model = step.config.model ? String(step.config.model) : undefined
-      const result = await withRetry(step.id, () => callLLM(prompt, model))
+      const result = await withRetry(() => callLLM(prompt, model))
       ctx.billableCalls += 1
       return { text: result.text, model: result.model, stubbed: result.stubbed }
     }
@@ -221,7 +223,7 @@ async function runStep(step: WorkflowStep, run: WorkflowRun, ctx: RunContext): P
       if (!url) throw new Error("http_request step missing url")
       ctx.billableCalls += 1
       try {
-        return await withRetry(step.id, async () => {
+        return await withRetry(async () => {
           const res = await fetch(url, { method, signal: AbortSignal.timeout(5000) })
           if (!res.ok) throw new Error(`HTTP ${res.status}`)
           const body = await res.text()
@@ -242,7 +244,7 @@ async function runStep(step: WorkflowStep, run: WorkflowRun, ctx: RunContext): P
     }
     case "db_write": {
       const value = { savedFrom: step.name, previous: ctx.lastOutput, at: new Date().toISOString() }
-      const art = writeArtifact({ orgId: run.orgId, runId: run.id, stepId: step.id, value })
+      const art = await dl.writeArtifact({ orgId: run.orgId, runId: run.id, stepId: step.id, value })
       return { artifactId: art.id, written: true, value }
     }
     case "notify": {
@@ -275,13 +277,11 @@ async function runStep(step: WorkflowStep, run: WorkflowRun, ctx: RunContext): P
   }
 }
 
-async function withRetry<T>(stepId: string, fn: () => Promise<T>): Promise<T> {
+async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
   let lastErr: unknown
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      const out = await fn()
-      // Reflect the successful attempt number on the step run if it exists.
-      return out
+      return await fn()
     } catch (err) {
       lastErr = err
       if (attempt < MAX_ATTEMPTS) {
@@ -300,20 +300,21 @@ export type ApproveResult =
 
 // Verifies the approver's role IN THE RUN'S ORG before resuming — this is the
 // mid-execution decision the assignment says cannot be a static DB permission.
-export function approveStep(input: { stepRunId: string; approverId: string }): ApproveResult {
-  const sr = raw.stepRun(input.stepRunId)
+export async function approveStep(input: { stepRunId: string; approverId: string }): Promise<ApproveResult> {
+  const dl = await getDataLayer()
+  const sr = await dl.getStepRun(input.stepRunId)
   if (!sr) return { ok: false, error: "Step run not found", code: "not_found" }
   if (sr.status !== "paused") return { ok: false, error: "Step is not awaiting approval", code: "state" }
 
-  const run = raw.run(sr.runId)
+  const run = await dl.getRun(sr.runId)
   if (!run) return { ok: false, error: "Run not found", code: "not_found" }
 
-  const role = roleInOrg(input.approverId, run.orgId)
+  const role = await dl.roleInOrg(input.approverId, run.orgId)
   if (role !== "owner" && role !== "editor") {
     return { ok: false, error: "Only an owner or editor in this org can approve", code: "forbidden" }
   }
 
-  updateStepRun(sr.id, {
+  await dl.updateStepRun(sr.id, {
     status: "completed",
     approvedBy: input.approverId,
     approvedAt: new Date().toISOString(),
@@ -322,6 +323,6 @@ export function approveStep(input: { stepRunId: string; approverId: string }): A
   })
 
   // Resume from the next step after the gate.
-  resumeRun(run.id, sr.order + 1)
+  await resumeRun(run.id, sr.order + 1)
   return { ok: true }
 }

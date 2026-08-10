@@ -1,7 +1,7 @@
 import { notFound, redirect } from "next/navigation"
 import { getSession } from "@/lib/auth"
 import { getQuota, getWorkflowDetail } from "@/lib/actions"
-import { raw } from "@/lib/store"
+import { getDataLayer } from "@/lib/data"
 import { TopBar } from "@/components/top-bar"
 import { WorkflowDetail } from "@/components/workflow-detail"
 
@@ -16,16 +16,14 @@ export default async function WorkflowPage({ params }: { params: Promise<{ id: s
 
   const { workflow } = detail
 
-  const runs = raw
-    .db()
-    .runs.filter((r) => r.workflowId === workflow.id)
-    .sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1))
-    .map((r) => ({
-      id: r.id,
-      status: r.status,
-      triggerType: r.triggerType,
-      startedAt: r.startedAt,
-    }))
+  // Layer 1 already enforced by getWorkflowDetail above.
+  const dl = await getDataLayer()
+  const runs = (await dl.listRuns(workflow.id)).map((r) => ({
+    id: r.id,
+    status: r.status,
+    triggerType: r.triggerType,
+    startedAt: r.startedAt,
+  }))
 
   return (
     <div className="min-h-screen bg-background">

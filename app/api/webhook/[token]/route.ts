@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
+import { getDataLayer } from "@/lib/data"
 import { startRun } from "@/lib/engine"
-import { raw } from "@/lib/store"
 
 // ---------------------------------------------------------------------------
 // Inbound webhook trigger. Stands in for a Hasura Action used as a webhook
@@ -13,17 +13,18 @@ import { raw } from "@/lib/store"
 export async function POST(_req: Request, ctx: { params: Promise<{ token: string }> }) {
   const { token } = await ctx.params
 
-  const trigger = raw.triggerByToken(token)
+  const dl = await getDataLayer()
+  const trigger = await dl.getTriggerByToken(token)
   if (!trigger) {
     return NextResponse.json({ ok: false, error: "Invalid webhook token" }, { status: 404 })
   }
 
-  const wf = raw.workflow(trigger.workflowId)
+  const wf = await dl.getWorkflow(trigger.workflowId)
   if (!wf) {
     return NextResponse.json({ ok: false, error: "Workflow not found" }, { status: 404 })
   }
 
-  const result = startRun({
+  const result = await startRun({
     workflowId: wf.id,
     triggeredBy: "webhook",
     triggerType: "webhook",

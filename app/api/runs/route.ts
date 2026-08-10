@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { getSession } from "@/lib/auth"
-import { raw } from "@/lib/store"
+import { getDataLayer } from "@/lib/data"
 
 // Org-scoped run list for a workflow. Used by the detail page to poll for new
 // runs and status changes (subscription simulation).
@@ -11,14 +11,12 @@ export async function GET(req: NextRequest) {
   const workflowId = req.nextUrl.searchParams.get("workflow")
   if (!workflowId) return NextResponse.json({ runs: [] })
 
-  const wf = raw.workflow(workflowId)
+  const dl = await getDataLayer()
+  const wf = await dl.getWorkflow(workflowId)
   // Layer 1: cross-org lookups return nothing.
   if (!wf || wf.orgId !== session.orgId) return NextResponse.json({ runs: [] })
 
-  const runs = raw
-    .db()
-    .runs.filter((r) => r.workflowId === workflowId)
-    .sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1))
+  const runs = (await dl.listRuns(workflowId))
     .map((r) => ({
       id: r.id,
       status: r.status,

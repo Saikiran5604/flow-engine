@@ -1,0 +1,9 @@
+drop table if exists public.artifacts cascade;
+drop table if exists public.step_runs cascade;
+drop table if exists public.workflow_runs cascade;
+drop table if exists public.workflow_triggers cascade;
+drop table if exists public.workflow_steps cascade;
+drop table if exists public.workflows cascade;
+drop table if exists public.org_members cascade;
+drop table if exists public.organizations cascade;
+drop table if exists public.users cascade;
