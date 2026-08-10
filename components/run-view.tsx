@@ -36,7 +36,7 @@ export function RunView({ runId, canApprove }: { runId: string; canApprove: bool
   // Poll the org-scoped run endpoint. This simulates a GraphQL subscription on
   // step_runs filtered by workflow_run_id; it stops polling once the run is
   // terminal to avoid needless requests.
-  const { data } = useSWR<RunPayload>(`/api/runs/${runId}`, fetcher, {
+  const { data, mutate } = useSWR<RunPayload>(`/api/runs/${runId}`, fetcher, {
     refreshInterval: (latest) => (latest && !ACTIVE_STATES.includes(latest.run.status) ? 0 : 700),
     revalidateOnFocus: false,
   })
@@ -74,6 +74,7 @@ export function RunView({ runId, canApprove }: { runId: string; canApprove: bool
             step={s}
             index={i}
             canApprove={canApprove}
+            onApproved={mutate}
           />
         ))}
       </ol>
@@ -85,10 +86,12 @@ function StepRunRow({
   step,
   index,
   canApprove,
+  onApproved,
 }: {
   step: StepRun
   index: number
   canApprove: boolean
+  onApproved: () => Promise<RunPayload | undefined>
 }) {
   const [open, setOpen] = useState(false)
   const [pending, startTransition] = useTransition()
@@ -99,7 +102,12 @@ function StepRunRow({
     setError(null)
     startTransition(async () => {
       const res = await approveStepAction(step.id)
-      if (!res.ok) setError(res.error)
+      if (!res.ok) {
+        setError(res.error)
+        await onApproved()
+        return
+      }
+      await onApproved()
     })
   }
 
