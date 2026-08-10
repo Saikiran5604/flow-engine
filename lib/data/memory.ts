@@ -12,6 +12,8 @@ import {
   roleInOrg,
   updateRun,
   updateStepRun,
+  updateTrigger,
+  usageStats,
   writeArtifact,
 } from "../store"
 import type { DataLayer } from "./adapter"
@@ -73,6 +75,12 @@ export const memoryDataLayer: DataLayer = {
   async getTriggerByToken(token) {
     return raw.triggerByToken(token)
   },
+  async listTriggersByType(type) {
+    return raw.triggersByType(type)
+  },
+  async updateTrigger(id, patch) {
+    updateTrigger(id, patch)
+  },
   async replaceSteps(workflowId, steps) {
     replaceSteps(workflowId, steps)
   },
@@ -117,5 +125,9 @@ export const memoryDataLayer: DataLayer = {
   },
   async writeArtifact(input) {
     return writeArtifact(input)
+  },
+
+  async getUsageStats(orgId) {
+    return usageStats(orgId)
   },
 }

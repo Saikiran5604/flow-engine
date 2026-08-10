@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button"
 import { StatusBadge } from "@/components/status-badge"
 import { RunView } from "@/components/run-view"
 import { WorkflowBuilder } from "@/components/workflow-builder"
+import { TriggersPanel } from "@/components/triggers-panel"
+import { SchedulerHeartbeat } from "@/components/scheduler-heartbeat"
 import { triggerWorkflowRunAction } from "@/lib/actions"
 import { STEP_META } from "@/lib/step-meta"
 import type { Role, StepType, TriggerType, WorkflowStep, WorkflowTrigger } from "@/lib/types"
@@ -43,7 +45,7 @@ export function WorkflowDetail({ role, workflow, runs, initialRunId }: DetailPro
 
   // Subscription simulation: poll the run list so newly triggered runs and
   // status transitions surface without a manual refresh.
-  const { data: liveRuns } = useSWR<{ runs: RunSummary[] }>(
+  const { data: liveRuns, mutate: mutateRuns } = useSWR<{ runs: RunSummary[] }>(
     `/api/runs?workflow=${workflow.id}`,
     fetcher,
     { refreshInterval: 1500, fallbackData: { runs } },
@@ -99,6 +101,7 @@ export function WorkflowDetail({ role, workflow, runs, initialRunId }: DetailPro
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">
+      <SchedulerHeartbeat />
       <Link
         href="/"
         className="mb-6 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
@@ -169,7 +172,10 @@ export function WorkflowDetail({ role, workflow, runs, initialRunId }: DetailPro
           </div>
         </section>
 
-        <aside>
+        <aside className="space-y-6">
+          <TriggersPanel triggers={workflow.triggers} onFired={() => mutateRuns()} />
+
+          <div>
           <h2 className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">Run history</h2>
           <ul className="space-y-1.5">
             {runList.length === 0 && <li className="text-sm text-muted-foreground">No runs yet.</li>}

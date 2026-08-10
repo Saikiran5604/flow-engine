@@ -147,6 +147,13 @@ export async function getQuota() {
   return { used: org.quotaUsed, allowed: org.quotaAllowed, period: org.period, orgName: org.name }
 }
 
+export async function getUsageStats() {
+  const session = await getSession()
+  if (!session) return null
+  const dl = await getDataLayer()
+  return dl.getUsageStats(session.orgId) // Layer 1: scoped to caller's org
+}
+
 export async function getOrgMembers() {
   const session = await getSession()
   if (!session) return []

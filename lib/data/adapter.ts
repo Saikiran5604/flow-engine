@@ -3,6 +3,7 @@ import type {
   OrgMember,
   Role,
   StepRun,
+  UsageStats,
   User,
   Workflow,
   WorkflowRun,
@@ -73,6 +74,8 @@ export interface DataLayer {
   getSteps(workflowId: string): Promise<WorkflowStep[]>
   getTriggers(workflowId: string): Promise<WorkflowTrigger[]>
   getTriggerByToken(token: string): Promise<WorkflowTrigger | undefined>
+  listTriggersByType(type: WorkflowTrigger["type"]): Promise<WorkflowTrigger[]>
+  updateTrigger(id: string, patch: Partial<WorkflowTrigger>): Promise<void>
   replaceSteps(workflowId: string, steps: Omit<WorkflowStep, "id" | "workflowId">[]): Promise<void>
   replaceTriggers(workflowId: string, triggers: Omit<WorkflowTrigger, "id" | "workflowId">[]): Promise<void>
 
@@ -96,4 +99,7 @@ export interface DataLayer {
   // --- quota / artifacts ----------------------------------------------------
   incrementQuota(orgId: string, by?: number): Promise<void>
   writeArtifact(input: { orgId: string; runId: string; stepId: string; value: unknown }): Promise<ArtifactRecord>
+
+  // --- aggregation ----------------------------------------------------------
+  getUsageStats(orgId: string): Promise<UsageStats>
 }

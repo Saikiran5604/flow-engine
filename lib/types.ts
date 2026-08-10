@@ -69,6 +69,20 @@ export interface WorkflowTrigger {
   config: Record<string, unknown>
   // webhook token used to build an inbound URL; only present for webhook triggers
   token?: string
+  // scheduled triggers only: ISO timestamp of the last automatic fire
+  lastFiredAt?: string
+}
+
+// Per-org usage aggregation for the current billing period. In production this
+// is a Hasura tracked SQL view (org_usage_stats) exposed as a GraphQL
+// aggregate; here it is computed from the in-memory runs.
+export interface UsageStats {
+  period: string
+  totalRuns: number
+  completedRuns: number
+  failedRuns: number
+  pausedRuns: number
+  avgDurationMs: number | null
 }
 
 export interface Workflow {

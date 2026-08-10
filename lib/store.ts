@@ -3,6 +3,7 @@ import type {
   OrgMember,
   Role,
   StepRun,
+  UsageStats,
   User,
   Workflow,
   WorkflowRun,
@@ -148,6 +149,9 @@ function seedDemoWorkflow(db: DB) {
   db.triggers.push(
     { id: "tg_manual", workflowId: wfId, type: "manual", config: {} },
     { id: "tg_webhook", workflowId: wfId, type: "webhook", config: {}, token: "acme-demo-token" },
+    // Fires automatically on an interval; the in-app heartbeat drives it in the
+    // live demo, a Hasura cron trigger drives it in production.
+    { id: "tg_sched", workflowId: wfId, type: "scheduled", config: { everySeconds: 90, enabled: true } },
   )
 }
 
@@ -177,6 +181,8 @@ export const raw = {
       .sort((a, b) => a.order - b.order),
   triggersFor: (workflowId: string) => getDB().triggers.filter((t) => t.workflowId === workflowId),
   triggerByToken: (token: string) => getDB().triggers.find((t) => t.type === "webhook" && t.token === token),
+  trigger: (id: string) => getDB().triggers.find((t) => t.id === id),
+  triggersByType: (type: WorkflowTrigger["type"]) => getDB().triggers.filter((t) => t.type === type),
   run: (id: string) => getDB().runs.find((r) => r.id === id),
   stepRunsFor: (runId: string) =>
     getDB()
@@ -299,6 +305,37 @@ export function writeArtifact(input: { orgId: string; runId: string; stepId: str
   }
   getDB().artifacts.push(a)
   return a
+}
+
+export function updateTrigger(id: string, patch: Partial<WorkflowTrigger>) {
+  const t = raw.trigger(id)
+  if (t) Object.assign(t, patch)
+}
+
+// Aggregation over an org's runs for the current period. Mirrors the
+// org_usage_stats SQL view / GraphQL aggregate used in production.
+export function usageStats(orgId: string): UsageStats {
+  const db = getDB()
+  const runs = db.runs.filter((r) => r.orgId === orgId && r.startedAt.slice(0, 7) === CURRENT_PERIOD)
+  const completed = runs.filter((r) => r.status === "completed")
+  const failed = runs.filter((r) => r.status === "failed")
+  const paused = runs.filter((r) => r.status === "paused")
+
+  const durations = completed
+    .filter((r) => r.finishedAt)
+    .map((r) => new Date(r.finishedAt!).getTime() - new Date(r.startedAt).getTime())
+  const avgDurationMs = durations.length
+    ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length)
+    : null
+
+  return {
+    period: CURRENT_PERIOD,
+    totalRuns: runs.length,
+    completedRuns: completed.length,
+    failedRuns: failed.length,
+    pausedRuns: paused.length,
+    avgDurationMs,
+  }
 }
 
 export const CURRENT_PERIOD_LABEL = CURRENT_PERIOD

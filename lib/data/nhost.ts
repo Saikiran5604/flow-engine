@@ -90,6 +90,7 @@ export function createNhostDataLayer(config: NhostConfig): DataLayer {
     type: r.type as TriggerType,
     config: r.config ?? {},
     token: r.token ?? undefined,
+    lastFiredAt: r.last_fired_at ?? undefined,
   })
   const mapRun = (r: any): WorkflowRun => ({
     id: r.id,
@@ -234,7 +235,7 @@ export function createNhostDataLayer(config: NhostConfig): DataLayer {
     async getTriggers(workflowId) {
       const d = await gql<{ workflow_triggers: any[] }>(
         `query ($w: String!) {
-           workflow_triggers(where: {workflow_id: {_eq: $w}}) { id workflow_id type config token }
+           workflow_triggers(where: {workflow_id: {_eq: $w}}) { id workflow_id type config token last_fired_at }
          }`,
         { w: workflowId },
       )
@@ -244,12 +245,32 @@ export function createNhostDataLayer(config: NhostConfig): DataLayer {
       const d = await gql<{ workflow_triggers: any[] }>(
         `query ($t: String!) {
            workflow_triggers(where: {type: {_eq: "webhook"}, token: {_eq: $t}}, limit: 1) {
-             id workflow_id type config token
+             id workflow_id type config token last_fired_at
            }
          }`,
         { t: token },
       )
       return d.workflow_triggers[0] ? mapTrigger(d.workflow_triggers[0]) : undefined
+    },
+    async listTriggersByType(type) {
+      const d = await gql<{ workflow_triggers: any[] }>(
+        `query ($t: String!) {
+           workflow_triggers(where: {type: {_eq: $t}}) { id workflow_id type config token last_fired_at }
+         }`,
+        { t: type },
+      )
+      return d.workflow_triggers.map(mapTrigger)
+    },
+    async updateTrigger(id, patch) {
+      const set: Record<string, unknown> = {}
+      if (patch.config !== undefined) set.config = patch.config
+      if (patch.lastFiredAt !== undefined) set.last_fired_at = patch.lastFiredAt
+      await gql(
+        `mutation ($id: String!, $set: workflow_triggers_set_input!) {
+           update_workflow_triggers_by_pk(pk_columns: {id: $id}, _set: $set) { id }
+         }`,
+        { id, set },
+      )
     },
     async replaceSteps(workflowId, steps) {
       // Delete + re-insert atomically in one request.
@@ -420,6 +441,31 @@ export function createNhostDataLayer(config: NhostConfig): DataLayer {
       )
       const r = d.insert_artifacts_one
       return { id: r.id, orgId: r.org_id, runId: r.run_id, stepId: r.step_id, value: r.value, createdAt: r.created_at }
+    },
+
+    // --- aggregation --------------------------------------------------------
+    async getUsageStats(orgId) {
+      // Reads the tracked SQL view org_usage_stats (see nhost/migrations).
+      const d = await gql<{ org_usage_stats: any[] }>(
+        `query ($o: String!) {
+           org_usage_stats(where: {org_id: {_eq: $o}}, limit: 1) {
+             period total_runs completed_runs failed_runs paused_runs avg_duration_ms
+           }
+         }`,
+        { o: orgId },
+      )
+      const row = d.org_usage_stats[0]
+      if (!row) {
+        return { period: "", totalRuns: 0, completedRuns: 0, failedRuns: 0, pausedRuns: 0, avgDurationMs: null }
+      }
+      return {
+        period: row.period,
+        totalRuns: row.total_runs,
+        completedRuns: row.completed_runs,
+        failedRuns: row.failed_runs,
+        pausedRuns: row.paused_runs,
+        avgDurationMs: row.avg_duration_ms ?? null,
+      }
     },
   }
 }

@@ -3,23 +3,27 @@ import { redirect } from "next/navigation"
 import { TopBar } from "@/components/top-bar"
 import { WorkflowList } from "@/components/workflow-list"
 import { RoleBadge } from "@/components/status-badge"
+import { UsageCard } from "@/components/usage-card"
+import { SchedulerHeartbeat } from "@/components/scheduler-heartbeat"
 import { getSession } from "@/lib/auth"
-import { getOrgMembers, getQuota, getWorkflows } from "@/lib/actions"
+import { getOrgMembers, getQuota, getUsageStats, getWorkflows } from "@/lib/actions"
 
 export default async function DashboardPage() {
   const session = await getSession()
   if (!session) redirect("/login")
 
-  const [{ workflows }, quota, members] = await Promise.all([
+  const [{ workflows }, quota, members, usage] = await Promise.all([
     getWorkflows(),
     getQuota(),
     getOrgMembers(),
+    getUsageStats(),
   ])
 
   const canCreate = session.role === "owner" || session.role === "editor"
 
   return (
     <div className="min-h-svh">
+      <SchedulerHeartbeat />
       <TopBar
         orgName={session.orgName}
         userName={session.user.name}
@@ -53,6 +57,8 @@ export default async function DashboardPage() {
           </section>
 
           <aside className="space-y-6">
+            {usage && <UsageCard stats={usage} />}
+
             <div className="rounded-xl border border-border bg-card p-4">
               <h2 className="mb-3 font-mono text-xs uppercase tracking-wide text-muted-foreground">
                 Organization members
