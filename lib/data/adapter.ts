@@ -17,7 +17,7 @@ import type {
 // Both the engine and the server actions talk ONLY to this interface, never to
 // a concrete store. That is what makes the backend swappable:
 //
-//   - `memory`  (lib/data/memory.ts) — in-process arrays; powers the live v0
+//   - `memory`  (lib/data/memory.ts) — in-process arrays; powers the live
 //     demo and tests. Selected when no nhost env vars are present.
 //   - `nhost`   (lib/data/nhost.ts)  — Hasura GraphQL over the wire; selected
 //     automatically when NHOST_GRAPHQL_URL + NHOST_ADMIN_SECRET are set.

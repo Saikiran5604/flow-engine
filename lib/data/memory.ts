@@ -20,7 +20,7 @@ import type { DataLayer } from "./adapter"
 
 // ---------------------------------------------------------------------------
 // In-memory DataLayer. Thin async wrappers over the existing globalThis store
-// (lib/store.ts). This is what powers the live v0 demo and keeps behaviour
+// (lib/store.ts). This is the zero-setup demo implementation and keeps behaviour
 // identical to the pre-adapter version — every call resolves synchronously.
 // ---------------------------------------------------------------------------
 
